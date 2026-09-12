@@ -1,0 +1,170 @@
+/* NTG / CTCCS v2.4.1 — deliberately drab. A real government system, not a startup. */
+:root {
+  --ink: #15191c;
+  --sub: #5c666e;
+  --mute: #8b949b;
+  --rule: #d3d9de;
+  --bg: #eceef0;
+  --paper: #ffffff;
+  --navy: #123a63;
+  --navy-dk: #0c2843;
+  --green: #16624a;
+  --green-bg: #eaf2ee;
+  --amber: #8a5c12;
+  --amber-bg: #faf3e4;
+  --red: #93251c;
+  --red-bg: #f9ecea;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.55 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+}
+code, .mono { font-family: "Cascadia Mono", ui-monospace, Consolas, Menlo, monospace; }
+
+/* ---- masthead ---- */
+.masthead { background: var(--navy); color: #fff; border-bottom: 3px solid var(--navy-dk); }
+.masthead-in { max-width: 1140px; margin: 0 auto; padding: 12px 22px; display: flex; gap: 14px; align-items: center; }
+.crest {
+  width: 38px; height: 38px; flex: none; border: 2px solid rgba(255,255,255,.55);
+  border-radius: 3px; display: grid; place-items: center; font-weight: 700; font-size: 12px; letter-spacing: .5px;
+}
+.masthead h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .2px; }
+.masthead p { margin: 1px 0 0; font-size: 12px; opacity: .8; }
+.officer-slot { margin-left: auto; text-align: right; font-size: 12px; }
+.officer-slot .who { font-weight: 600; }
+.officer-slot a { color: #cfe0f0; }
+
+/* ---- nav ---- */
+nav { background: var(--navy-dk); }
+.nav-in { max-width: 1140px; margin: 0 auto; padding: 0 22px; display: flex; gap: 2px; flex-wrap: wrap; }
+nav button {
+  background: none; border: 0; color: #c8d6e4; font: inherit; font-size: 13px;
+  padding: 10px 15px; cursor: pointer; border-bottom: 3px solid transparent;
+}
+nav button:hover { color: #fff; background: rgba(255,255,255,.06); }
+nav button[aria-current="true"] { color: #fff; background: rgba(255,255,255,.1); border-bottom-color: #e0b53c; font-weight: 600; }
+
+main { max-width: 1140px; margin: 0 auto; padding: 20px 22px 60px; }
+
+.sim {
+  background: #fdf6e3; border: 1px solid #e3d3a4; color: #6a5416;
+  padding: 9px 13px; font-size: 12.5px; border-radius: 3px; margin-bottom: 18px;
+}
+
+/* ---- panels ---- */
+.panel { background: var(--paper); border: 1px solid var(--rule); border-radius: 3px; margin-bottom: 16px; }
+.panel > h2 {
+  margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .3px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule); background: #f7f8f9;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.panel > h2 .hint { font-weight: 400; color: var(--mute); font-size: 11.5px; }
+.panel-body { padding: 16px; }
+
+/* ---- record grid ---- */
+.rec { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px 22px; }
+.rec dt { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--mute); }
+.rec dd { margin: 2px 0 0; font-weight: 500; }
+.rec dd .std { color: var(--mute); font-weight: 400; font-size: 12px; }
+
+/* ---- tables ---- */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--sub); background: #f7f8f9; font-weight: 600; }
+tbody tr:last-child td { border-bottom: 0; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+
+/* ---- status pills ---- */
+.pill {
+  display: inline-block; padding: 3px 9px; border-radius: 2px; font-size: 11.5px;
+  font-weight: 600; letter-spacing: .3px; border: 1px solid;
+  background: #eef1f3; color: var(--sub); border-color: var(--rule);
+}
+.pill.s-dispatched, .pill.s-customs_cleared { background: var(--green-bg); color: var(--green); border-color: #bcd3c9; }
+.pill.s-documents_lodged { background: var(--amber-bg); color: var(--amber); border-color: #ddc99c; }
+.pill.s-held { background: var(--red-bg); color: var(--red); border-color: #ddbdb8; }
+
+/* ---- forms & buttons ---- */
+label.f { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--sub); margin-bottom: 4px; }
+input, select, textarea {
+  font: inherit; font-size: 13.5px; padding: 7px 9px; border: 1px solid #b9c1c8;
+  border-radius: 2px; background: #fff; width: 100%; color: var(--ink);
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid #9db8d4; outline-offset: -1px; border-color: var(--navy); }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.row > * { flex: 1 1 180px; }
+.row > .tight { flex: 0 0 auto; }
+button.btn {
+  font: inherit; font-size: 13px; font-weight: 600; padding: 8px 16px; cursor: pointer;
+  border-radius: 2px; border: 1px solid var(--navy); background: var(--navy); color: #fff;
+}
+button.btn.ghost { background: #fff; color: var(--navy); }
+button.btn.danger { background: #fff; color: var(--red); border-color: var(--red); }
+button.btn:disabled { opacity: .45; cursor: not-allowed; }
+button.btn:hover:not(:disabled) { filter: brightness(1.12); }
+
+.locked { background: #f7f8f9; border: 1px dashed var(--rule); padding: 14px 16px; color: var(--sub); font-size: 13px; border-radius: 3px; }
+
+pre.json {
+  margin: 0; padding: 14px; background: #12222f; color: #d6e4ee; border-radius: 3px;
+  font-size: 12.5px; line-height: 1.5; overflow-x: auto;
+}
+pre.json .k { color: #8fd0f2; }
+pre.json .s { color: #b8e0a8; }
+pre.json .n { color: #f2c98f; }
+pre.json .null { color: #a89ab8; }
+
+.epath { font-size: 12.5px; }
+.epath .m { font-weight: 700; color: var(--navy); }
+.foot { color: var(--mute); font-size: 11.5px; text-align: center; padding: 26px 20px; }
+#toast {
+  position: fixed; right: 18px; bottom: 18px; max-width: 400px; padding: 11px 15px;
+  border-radius: 3px; color: #fff; background: var(--green); font-size: 13.5px;
+  box-shadow: 0 5px 18px rgba(0,0,0,.22); opacity: 0; transform: translateY(6px);
+  transition: .16s; pointer-events: none; z-index: 50;
+}
+#toast.show { opacity: 1; transform: none; }
+#toast.err { background: var(--red); }
+
+/* ---- additions for the role-aware portal ---- */
+.trackbar { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.trackbar > .grow { flex: 1 1 260px; }
+.muted { color: var(--mute); }
+.right { text-align: right; }
+.stack { display: flex; flex-direction: column; gap: 2px; }
+.tiny { font-size: 11.5px; color: var(--mute); }
+.chipline { display: flex; gap: 6px; flex-wrap: wrap; }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 10px 16px; border-top: 1px solid var(--rule); font-size: 12.5px; }
+.linky { background: none; border: 0; color: var(--navy); font: inherit; font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
+.formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.formgrid .full { grid-column: 1 / -1; }
+fieldset { border: 1px solid var(--rule); border-radius: 3px; padding: 14px 16px; margin: 0 0 16px; }
+legend { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--sub); font-weight: 600; padding: 0 6px; }
+.err { color: var(--red); font-size: 12.5px; margin-top: 6px; }
+.empty { padding: 28px 16px; text-align: center; color: var(--mute); font-size: 13px; }
+.actions-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px 22px; }
+.kpi .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff { font-size: 12.5px; }
+.diff del { color: var(--red); text-decoration: line-through; }
+.diff ins { color: var(--green); text-decoration: none; }
+
+/* Utility classes. The Content-Security-Policy forbids inline style attributes, so every
+   bit of spacing the JS-rendered markup needs has to be a class. */
+.narrow { max-width: 560px; }
+.mt0 { margin-top: 0; }
+.mt12 { margin-top: 12px; }
+.mt14 { margin-top: 14px; }
+.mb0 { margin-bottom: 0; }
+.mb10 { margin-bottom: 10px; }
+.mb12 { margin-bottom: 12px; }
+.mb14 { margin-bottom: 14px; }
+.grow2 { flex: 2 1 300px; }
+
+/* Sign in / Sign out sit on the navy masthead, so they cannot use the default navy
+   .linky colour — that renders navy-on-navy and the control disappears entirely. */
+.officer-slot .linky { color: #cfe0f0; }
+.officer-slot .linky:hover { color: #ffffff; }

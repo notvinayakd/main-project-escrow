@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NTG · Consignment Tracking &amp; Customs Clearance System</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-in">
+    <div class="crest">NTG</div>
+    <div>
+      <h1>National Trade Documentation Gateway</h1>
+      <p>Consignment Tracking &amp; Customs Clearance System (CTCCS) · v2.4.1</p>
+    </div>
+    <div class="officer-slot" id="whoSlot"></div>
+  </div>
+</header>
+
+<nav><div class="nav-in" id="nav"></div></nav>
+
+<main>
+  <div class="sim">
+    <strong>Simulation.</strong> A mock system built for academic demonstration (CSD415, TrustLC).
+    Not affiliated with any customs authority; no consignment shown here is real.
+    Response field names are frozen — renaming any key means re-configuring the zkTLS proof.
+  </div>
+  <div id="view"></div>
+</main>
+
+<div class="foot">National Trade Documentation Gateway · CTCCS v2.4.1</div>
+<div id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
