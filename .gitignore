@@ -30,3 +30,9 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+
+# AI tooling context — local only, never part of the submitted project
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
