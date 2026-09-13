@@ -35,6 +35,13 @@ contract Escrow {
 address[3] public attestors;
 address public arbitrator;
 
+// NEW (Person B): vote tracking for attest(). Key = keccak256(state,
+// statusCode, recordHash) - two attestors only "agree" if all three
+// match. voteCounts tracks how many said the same thing; hasVoted stops
+// one attestor voting twice for the same claim.
+mapping(bytes32 => uint8) public voteCounts;
+mapping(bytes32 => mapping(address => bool)) public hasVoted;
+
 // ---- Storage: convenience fee (NEW — flag to team before merging) -------
 address public immutable feeRecipient;
 uint256 public constant FEE_BPS = 200; // 2% = 200 basis points out of 10,000
@@ -124,29 +131,110 @@ function deposit() external payable {
 
     // ---- PERSON B: attestation ------------------------------------------------
     function attest(uint8 statusCode, bytes32 recordHash) external {
-        // TODO (Person B): only from one of the 3 attestors, only in Funded
-        // (expecting statusCode 3/Shipped) or Shipped (expecting statusCode
-        // 4/CustomsCleared) state. Track votes per (state, statusCode,
-        // recordHash) triple. On reaching 2-of-3 matching votes, advance
-        // state (Funded->Shipped or Shipped->CustomsCleared) and set
-        // clearanceDeadline when entering Shipped. Emit StatusAttested and
-        // EscrowShipped/EscrowCustomsCleared.
+        require(
+            msg.sender == attestors[0] ||
+            msg.sender == attestors[1] ||
+            msg.sender == attestors[2],
+            "Only an attestor may attest"
+        );
+        require(
+            state == State.Funded || state == State.Shipped,
+            "Not awaiting attestation"
+        );
+
+        // Which statusCode is valid depends on where we currently are.
+        // 99 (held/dispute) is always allowed from either state - that's
+        // the portal-side signal that something's wrong.
+        if (state == State.Funded) {
+            require(statusCode == 3 || statusCode == 99, "Unexpected statusCode for Funded");
+        } else {
+            require(statusCode == 4 || statusCode == 99, "Unexpected statusCode for Shipped");
+        }
+
+        bytes32 key = keccak256(abi.encodePacked(state, statusCode, recordHash));
+        require(!hasVoted[key][msg.sender], "Already attested to this");
+
+        hasVoted[key][msg.sender] = true;
+        voteCounts[key] += 1;
+        emit StatusAttested(msg.sender, statusCode);
+
+        // 2-of-3 quorum required for EVERY outcome, including a dispute -
+        // one attestor alone should never be able to decide anything.
+        if (voteCounts[key] < 2) {
+            return;
+        }
+
+        if (statusCode == 99) {
+            state = State.Disputed;
+            emit EscrowDisputed();
+        } else if (state == State.Funded) {
+            // statusCode == 3 confirmed by quorum
+            state = State.Shipped;
+            clearanceDeadline = block.timestamp + clearanceWindowSeconds;
+            emit EscrowShipped();
+        } else {
+            // state == State.Shipped, statusCode == 4 confirmed by quorum
+            state = State.CustomsCleared;
+            emit EscrowCustomsCleared();
+        }
     }
 
     // ---- PERSON C: release, refund, incentives --------------------------------
     function withdraw() external {
-        // TODO (Person C): only exporter, only from CustomsCleared.
-        // Pay out `amount` (minus any attestor reward - decide with Person B
-        // whether reward comes from a separate pool or off the top here).
-        // Move to Released. Emit EscrowReleased.
+        require(
+            msg.sender == exporter,
+            "Only exporter can withdraw"
+        );
+
+        require(
+            state == State.CustomsCleared,
+            "Escrow not cleared"
+        );
+
+        // Mark the escrow as released before transferring funds.
+        state = State.Released;
+
+        // Transfer the full escrow amount to the exporter.
+        // The 2% fee was already paid separately during deposit().
+        (bool success, ) = payable(exporter).call{value: amount}("");
+
+        require(
+            success,
+            "Transfer failed"
+        );
+
+        emit EscrowReleased(exporter, amount);
     }
 
     function refund() external {
-        // TODO (Person C): timeout paths only - Funded past dispatchDeadline,
-        // or setupDeadline passed while still Proposed/Ready (nothing to
-        // refund there, just let it go inert - see design notes on why an
-        // unfunded expiry needs no transaction at all).
-        // Emit EscrowRefunded.
+        require(
+            msg.sender == importer,
+            "Only importer can refund"
+        );
+
+        require(
+            state == State.Funded,
+            "Refund not available"
+        );
+
+        require(
+            block.timestamp > dispatchDeadline,
+            "Dispatch deadline not passed"
+        );
+
+        // Mark the escrow as refunded before transferring funds.
+        state = State.Refunded;
+
+        // Return the full escrow amount to the importer.
+        // The 2% fee was already paid separately during deposit().
+        (bool success, ) = payable(importer).call{value: amount}("");
+
+        require(
+            success,
+            "Transfer failed"
+        );
+
+        emit EscrowRefunded(importer, amount);
     }
 
     // ---- PERSON D: disputes + arbitrator ---------------------------------------
