@@ -29,6 +29,8 @@ contract Escrow {
     uint256 public setupDeadline;              // Proposed & Ready share this one clock
     uint256 public dispatchDeadline;           // Funded must reach Shipped by this time
     uint256 public clearanceDeadline;          // Shipped must reach CustomsCleared by this time
+    uint256 public dispatchWindowSeconds;      // remembered from constructor, used by deposit()
+    uint256 public clearanceWindowSeconds;     // remembered from constructor, used by attest()
 // ---- Storage: attestors + arbitrator (PERSON B & D territory) -----------
 address[3] public attestors;
 address public arbitrator;
@@ -36,6 +38,17 @@ address public arbitrator;
 // ---- Storage: convenience fee (NEW — flag to team before merging) -------
 address public immutable feeRecipient;
 uint256 public constant FEE_BPS = 200; // 2% = 200 basis points out of 10,000
+
+// ---- Events ---------------------------------------------------------------
+event EscrowAccepted(address indexed exporter);
+event EscrowFunded(uint256 amount);
+event StatusAttested(address indexed attestor, uint8 statusCode);
+event EscrowShipped();
+event EscrowCustomsCleared();
+event EscrowReleased(address indexed to, uint256 amount);
+event EscrowRefunded(address indexed to, uint256 amount);
+event EscrowDisputed();
+event DisputeResolved(State outcome);
 
 // ---- PERSON A: constructor + handshake + funding -------------------------
 constructor(
