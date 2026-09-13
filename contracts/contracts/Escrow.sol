@@ -238,13 +238,39 @@ function deposit() external payable {
     }
 
     // ---- PERSON D: disputes + arbitrator ---------------------------------------
-    function resolveDispute(bool releaseToExporter) external {
-        // TODO (Person D): only arbitrator, only from Disputed. Pays out to
-        // whichever side, moves to Released or Refunded. Emit DisputeResolved.
+
+function resolveDispute(bool releaseToExporter) external {
+    require(msg.sender == arbitrator, "Only arbitrator");
+    require(state == State.Disputed, "Not disputed");
+
+    if (releaseToExporter) {
+        state = State.Released;
+
+        (bool success, ) = payable(exporter).call{value: amount}("");
+        require(success, "Transfer failed");
+
+        emit EscrowReleased(exporter, amount);
+    } else {
+        state = State.Refunded;
+
+        (bool success, ) = payable(importer).call{value: amount}("");
+        require(success, "Transfer failed");
+
+        emit EscrowRefunded(importer, amount);
     }
 
-    // TODO (Person D): a way to ENTER Disputed - e.g. anyone can call
-    // checkTimeout() and if clearanceDeadline has passed while still
-    // Shipped, move to Disputed. Coordinate with Person B since attest()
-    // also needs to know about this deadline.
+    emit DisputeResolved(state);
+}
+
+function checkTimeout() external {
+    require(state == State.Shipped, "Not shipped");
+    require(
+        block.timestamp > clearanceDeadline,
+        "Clearance deadline not passed"
+    );
+
+    state = State.Disputed;
+
+    emit EscrowDisputed();
+}
 }
