@@ -29,51 +29,85 @@ contract Escrow {
     uint256 public setupDeadline;              // Proposed & Ready share this one clock
     uint256 public dispatchDeadline;           // Funded must reach Shipped by this time
     uint256 public clearanceDeadline;          // Shipped must reach CustomsCleared by this time
+// ---- Storage: attestors + arbitrator (PERSON B & D territory) -----------
+address[3] public attestors;
+address public arbitrator;
 
-    // ---- Storage: attestors + arbitrator (PERSON B & D territory) -----------
-    address[3] public attestors;
-    address public arbitrator;
+// ---- Storage: convenience fee (NEW — flag to team before merging) -------
+address public immutable feeRecipient;
+uint256 public constant FEE_BPS = 200; // 2% = 200 basis points out of 10,000
 
-    // ---- Events ---------------------------------------------------------------
-    event EscrowAccepted(address indexed exporter);
-    event EscrowFunded(uint256 amount);
-    event StatusAttested(address indexed attestor, uint8 statusCode);
-    event EscrowShipped();
-    event EscrowCustomsCleared();
-    event EscrowReleased(address indexed to, uint256 amount);
-    event EscrowRefunded(address indexed to, uint256 amount);
-    event EscrowDisputed();
-    event DisputeResolved(State outcome);
+// ---- PERSON A: constructor + handshake + funding -------------------------
+constructor(
+    address _exporter,
+    uint256 _amount,
+    string memory _consignmentId,
+    uint256 _setupWindowSeconds,
+    uint256 _dispatchWindowSeconds,
+    uint256 _clearanceWindowSeconds,
+    address[3] memory _attestors,
+    address _arbitrator,
+    address _feeRecipient   // NEW param
+) {
+    require(_exporter != address(0), "Invalid exporter");
+    require(_exporter != msg.sender, "Exporter cannot be importer");
+    require(_amount > 0, "Amount must be greater than zero");
+    require(bytes(_consignmentId).length > 0, "Empty consignmentId");
+    require(_setupWindowSeconds > 0, "Invalid setup window");
+    require(_dispatchWindowSeconds > 0, "Invalid dispatch window");
+    require(_clearanceWindowSeconds > 0, "Invalid clearance window");
+    require(_arbitrator != address(0), "Invalid arbitrator");
+    require(_feeRecipient != address(0), "Invalid feeRecipient");
 
-    // ---- PERSON A: constructor + handshake + funding -------------------------
-    constructor(
-        address _exporter,
-        uint256 _amount,
-        string memory _consignmentId,
-        uint256 _setupWindowSeconds,
-        uint256 _dispatchWindowSeconds,
-        uint256 _clearanceWindowSeconds,
-        address[3] memory _attestors,
-        address _arbitrator
-    ) {
-        // TODO (Person A): validate inputs, set importer/exporter/amount/
-        // consignmentId, set state = Proposed, set setupDeadline.
-        // Also store attestors/arbitrator/dispatchWindow/clearanceWindow for
-        // later use by Persons B/C/D (don't compute their deadlines yet -
-        // those start counting from Funded/Shipped, not from deployment).
+    for (uint256 i = 0; i < 3; i++) {
+        require(_attestors[i] != address(0), "Invalid attestor");
     }
+    require(_attestors[0] != _attestors[1], "Duplicate attestor");
+    require(_attestors[0] != _attestors[2], "Duplicate attestor");
+    require(_attestors[1] != _attestors[2], "Duplicate attestor");
 
-    function accept() external {
-        // TODO (Person A): Proposed -> Ready. Only exporter, only before
-        // setupDeadline. Emit EscrowAccepted.
-    }
+    importer = msg.sender;
+    exporter = _exporter;
+    amount = _amount;
+    consignmentId = _consignmentId;
 
-    function deposit() external payable {
-        // TODO (Person A): Ready -> Funded. Only importer, msg.value must
-        // equal `amount`, only before setupDeadline. Emit EscrowFunded.
-        // This is also where dispatchDeadline should actually start
-        // counting (block.timestamp + dispatchWindowSeconds at this moment).
-    }
+    state = State.Proposed;
+    setupDeadline = block.timestamp + _setupWindowSeconds;
+
+    dispatchWindowSeconds = _dispatchWindowSeconds;
+    clearanceWindowSeconds = _clearanceWindowSeconds;
+
+    attestors = _attestors;
+    arbitrator = _arbitrator;
+    feeRecipient = _feeRecipient;
+}
+
+function accept() external {
+    require(msg.sender == exporter, "Only exporter");
+    require(state == State.Proposed, "Not proposed");
+    require(block.timestamp <= setupDeadline, "Setup expired");
+
+    state = State.Ready;
+    emit EscrowAccepted(exporter);
+}
+
+// ---- deposit(): buyer pays `amount` into escrow + 2% fee on top ---------
+function deposit() external payable {
+    require(msg.sender == importer, "Only importer");
+    require(state == State.Ready, "Not ready");
+    require(block.timestamp <= setupDeadline, "Setup expired");
+
+    uint256 fee = (amount * FEE_BPS) / 10000;
+    require(msg.value == amount + fee, "Incorrect amount");
+
+    state = State.Funded;
+    dispatchDeadline = block.timestamp + dispatchWindowSeconds;
+
+    (bool sent, ) = feeRecipient.call{value: fee}("");
+    require(sent, "Fee transfer failed");
+
+    emit EscrowFunded(amount);
+}
 
     // ---- PERSON B: attestation ------------------------------------------------
     function attest(uint8 statusCode, bytes32 recordHash) external {
