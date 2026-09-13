@@ -1,4 +1,3 @@
-```solidity
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.34;
 
@@ -207,5 +206,4 @@ contract Escrow {
     // Shipped, move to Disputed. Coordinate with Person B since attest()
     // also needs to know about this deadline.
 }
-```
 
