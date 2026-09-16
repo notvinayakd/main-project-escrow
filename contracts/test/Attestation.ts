@@ -93,7 +93,7 @@ describe("Escrow — Attestation (attest())", function () {
     await escrow.connect(a2).attest(3, differentHash); // same statusCode, different hash
 
     // Neither key reached 2 votes - this is the "stalemate" case, expected
-    // to stay stuck until Person D's timeout logic exists.
+    // to stay stuck until Aleena's timeout logic exists.
     expect(await escrow.state()).to.equal(2n); // still Funded
   });
 

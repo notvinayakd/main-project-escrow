@@ -43,7 +43,7 @@ const RECORD_HASH = ethers.keccak256(
   ethers.toUtf8Bytes("SHP-88214-dispatched")
 );
 
-describe("Escrow — Disputes (Person D)", function () {
+describe("Escrow — Disputes (Aleena)", function () {
 
   // ---------------------------------------------------------
   // checkTimeout()

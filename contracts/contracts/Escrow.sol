@@ -31,11 +31,11 @@ contract Escrow {
     uint256 public clearanceDeadline;          // Shipped must reach CustomsCleared by this time
     uint256 public dispatchWindowSeconds;      // remembered from constructor, used by deposit()
     uint256 public clearanceWindowSeconds;     // remembered from constructor, used by attest()
-// ---- Storage: attestors + arbitrator (PERSON B & D territory) -----------
+// ---- Storage: attestors + arbitrator (VINAYAK & ALEENA territory) -----------
 address[3] public attestors;
 address public arbitrator;
 
-// NEW (Person B): vote tracking for attest(). Key = keccak256(state,
+// NEW (Vinayak): vote tracking for attest(). Key = keccak256(state,
 // statusCode, recordHash) - two attestors only "agree" if all three
 // match. voteCounts tracks how many said the same thing; hasVoted stops
 // one attestor voting twice for the same claim.
@@ -57,7 +57,7 @@ event EscrowRefunded(address indexed to, uint256 amount);
 event EscrowDisputed();
 event DisputeResolved(State outcome);
 
-// ---- PERSON A: constructor + handshake + funding -------------------------
+// ---- KARTHIK: constructor + handshake + funding -------------------------
 constructor(
     address _exporter,
     uint256 _amount,
@@ -129,7 +129,7 @@ function deposit() external payable {
     emit EscrowFunded(amount);
 }
 
-    // ---- PERSON B: attestation ------------------------------------------------
+    // ---- VINAYAK: attestation ------------------------------------------------
     function attest(uint8 statusCode, bytes32 recordHash) external {
         require(
             msg.sender == attestors[0] ||
@@ -179,7 +179,7 @@ function deposit() external payable {
         }
     }
 
-    // ---- PERSON C: release, refund, incentives --------------------------------
+    // ---- ROSHAN: release, refund, incentives --------------------------------
     function withdraw() external {
         require(
             msg.sender == exporter,
@@ -237,7 +237,7 @@ function deposit() external payable {
         emit EscrowRefunded(importer, amount);
     }
 
-    // ---- PERSON D: disputes + arbitrator ---------------------------------------
+    // ---- ALEENA: disputes + arbitrator ---------------------------------------
 
 function resolveDispute(bool releaseToExporter) external {
     require(msg.sender == arbitrator, "Only arbitrator");
