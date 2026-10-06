@@ -1,245 +1,360 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ethers } from 'ethers'
 import './App.css'
-import EscrowABI from './contracts/Escrow.json'
-
-const ESCROW_ADDRESS = '0x5fbdb2315678afecb367f032d93f642f64180aa3'
+import {
+  HARDHAT_CHAIN_ID,
+  LIFECYCLE,
+  STATES,
+  deployEscrow,
+  deriveRoles,
+  ensureHardhatChain,
+  errText,
+  fmtEth,
+  fmtTime,
+  getActions,
+  getContract,
+  loadSnapshot,
+  same,
+  short,
+  waitingOn,
+} from './lib/escrow'
+import {
+  buildAlerts,
+  buildListAlerts,
+  eventsToNotes,
+} from './lib/notifications'
+import {
+  addEscrow,
+  getSeen,
+  isDisconnected,
+  loadEscrows,
+  removeEscrow,
+  setDisconnected,
+  setSeen,
+} from './lib/storage'
+import NotificationBell from './components/NotificationBell'
+import AccountMenu from './components/AccountMenu'
+import EscrowList from './components/EscrowList'
+import ProposeForm from './components/ProposeForm'
 
 function App() {
-  const [walletConnected, setWalletConnected] = useState(false)
-  const [walletAddress, setWalletAddress] = useState('')
-  const [escrowContract, setEscrowContract] = useState(null)
+  const [account, setAccount] = useState('')
+  const [escrows, setEscrows] = useState(() => loadEscrows())
+  const [summaries, setSummaries] = useState({})
+  const [selected, setSelected] = useState(null) // escrow address being viewed
+  const [view, setView] = useState('list') // 'list' | 'detail' | 'propose'
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [recordHash, setRecordHash] = useState('')
+  const [seenMap, setSeenMap] = useState({})
 
-  async function connectWallet() {
-    if (!window.ethereum) {
-      alert('MetaMask is not installed. Please install MetaMask first.')
-      return
-    }
+  // Refs so the polling timer and wallet listeners always see current values.
+  const signerRef = useRef(null)
+  const escrowsRef = useRef(escrows)
+  const selectedRef = useRef(null)
+  const busyRef = useRef(false)
+  useEffect(() => {
+    busyRef.current = busy
+  }, [busy])
 
+  const connected = !!account
+
+  // Re-read the chain. A fresh provider each time avoids ethers'
+  // cached-network errors after the wallet switches chain.
+  const refresh = useCallback(async (silent = false) => {
     try {
-      await window.ethereum.request({
-        method: 'eth_requestAccounts',
-      })
-
-      try {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x7a69' }],
-        })
-      } catch (switchError) {
-        if (switchError.code === 4902) {
-          await window.ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [
-              {
-                chainId: '0x7a69',
-                chainName: 'Hardhat Local',
-                nativeCurrency: {
-                  name: 'Ether',
-                  symbol: 'ETH',
-                  decimals: 18,
-                },
-                rpcUrls: ['http://127.0.0.1:8545'],
-              },
-            ],
-          })
-        } else {
-          throw switchError
-        }
-      }
-
       const provider = new ethers.BrowserProvider(window.ethereum)
       const signer = await provider.getSigner()
       const address = await signer.getAddress()
+      const network = await provider.getNetwork()
 
-      const contract = new ethers.Contract(
-        ESCROW_ADDRESS,
-        EscrowABI.abi,
-        signer
+      if (Number(network.chainId) !== HARDHAT_CHAIN_ID) {
+        throw new Error(
+          `Wrong network (chain ${network.chainId}). Switch the wallet to Hardhat Local (31337).`
+        )
+      }
+
+      signerRef.current = signer
+      const sel = selectedRef.current
+      const next = {}
+      await Promise.all(
+        escrowsRef.current.map(async (addr) => {
+          try {
+            next[addr] = await loadSnapshot(addr, provider, address, {
+              withEvents: addr === sel, // activity feed only for the open escrow
+            })
+          } catch (error) {
+            next[addr] = { missing: true, error: errText(error) }
+          }
+        })
       )
 
-      setWalletAddress(address)
-      setEscrowContract(contract)
-      setWalletConnected(true)
-      setMessage('Wallet and Escrow contract connected.')
+      setAccount(address)
+      setSummaries(next)
+    } catch (error) {
+      if (!silent) {
+        console.error('Refresh failed:', error)
+        setMessage(errText(error))
+        setAccount('')
+        setSummaries({})
+      }
+    }
+  }, [])
 
-      console.log('Connected wallet:', address)
-      console.log('Connected Escrow contract:', contract)
+  async function connectWallet() {
+    if (!window.ethereum) {
+      setMessage('No wallet found. Install MetaMask, then reload this page.')
+      return
+    }
+    try {
+      await window.ethereum.request({ method: 'eth_requestAccounts' })
+      await ensureHardhatChain()
+      setDisconnected(false)
+      setMessage('')
+      await refresh()
     } catch (error) {
       console.error('Wallet connection failed:', error)
-      setMessage(error.reason || error.message || 'Wallet connection failed.')
+      setMessage(errText(error))
     }
   }
 
-  async function runTransaction(transactionFunction, successMessage) {
-    if (!escrowContract) {
-      alert('Please connect your wallet first.')
-      return
+  // Wallets have no real "logout". Disconnect = the app forgets the account
+  // and asks the wallet to revoke this site's access.
+  async function disconnectWallet() {
+    try {
+      await window.ethereum.request({
+        method: 'wallet_revokePermissions',
+        params: [{ eth_accounts: {} }],
+      })
+    } catch {
+      // older wallets: the app-side disconnect below still applies
     }
+    setDisconnected(true)
+    signerRef.current = null
+    selectedRef.current = null
+    setSelected(null)
+    setView('list')
+    setAccount('')
+    setSummaries({})
+    setMessage('')
+  }
 
+  // Opens the wallet's own account chooser.
+  async function switchAccount() {
+    try {
+      await window.ethereum.request({
+        method: 'wallet_requestPermissions',
+        params: [{ eth_accounts: {} }],
+      })
+      await refresh()
+    } catch (error) {
+      if (error.code !== 4001) setMessage(errText(error)) // 4001 = user closed it
+    }
+  }
+
+  // Reconnect automatically after a page reload, unless the user disconnected.
+  useEffect(() => {
+    if (!window.ethereum || isDisconnected()) return
+    window.ethereum
+      .request({ method: 'eth_accounts' })
+      .then((accounts) => {
+        if (accounts.length) refresh()
+      })
+      .catch(() => {})
+  }, [refresh])
+
+  // Follow the wallet: switching account or network updates the screen.
+  useEffect(() => {
+    if (!connected || !window.ethereum) return undefined
+    const onAccounts = (accounts) => {
+      if (accounts.length === 0) {
+        setAccount('')
+        setSummaries({})
+      } else {
+        refresh()
+      }
+    }
+    const onChain = () => refresh()
+    window.ethereum.on('accountsChanged', onAccounts)
+    window.ethereum.on('chainChanged', onChain)
+    return () => {
+      window.ethereum.removeListener('accountsChanged', onAccounts)
+      window.ethereum.removeListener('chainChanged', onChain)
+    }
+  }, [connected, refresh])
+
+  // Poll so the screen also reflects actions taken by the other parties.
+  useEffect(() => {
+    if (!connected) return undefined
+    const id = setInterval(() => {
+      if (!busyRef.current) refresh(true)
+    }, 4000)
+    return () => clearInterval(id)
+  }, [connected, refresh])
+
+  // ---------- navigation ----------
+
+  function openEscrow(address) {
+    selectedRef.current = address
+    setSelected(address)
+    setView('detail')
+    setMessage('')
+    refresh(true)
+  }
+
+  function backToList() {
+    selectedRef.current = null
+    setSelected(null)
+    setView('list')
+  }
+
+  function addByAddress(address) {
+    const list = addEscrow(address)
+    escrowsRef.current = list
+    setEscrows(list)
+    openEscrow(ethers.getAddress(address))
+  }
+
+  function forget(address) {
+    const list = removeEscrow(address)
+    escrowsRef.current = list
+    setEscrows(list)
+  }
+
+  // ---------- transactions ----------
+
+  async function run(transactionFunction, successMessage) {
     try {
       setBusy(true)
-      setMessage('Waiting for transaction...')
-
+      setMessage('Confirm the transaction in your wallet...')
       const tx = await transactionFunction()
-
       setMessage('Transaction submitted. Waiting for confirmation...')
-
       await tx.wait()
-
       setMessage(successMessage)
+      await refresh(true)
     } catch (error) {
       console.error('Transaction failed:', error)
-
-      const reason =
-        error.reason ||
-        error.shortMessage ||
-        error.message ||
-        'Transaction failed.'
-
-      setMessage(`Transaction failed: ${reason}`)
+      setMessage(`Transaction failed: ${errText(error)}`)
     } finally {
       setBusy(false)
     }
   }
 
-  async function acceptEscrow() {
-    await runTransaction(
-      () => escrowContract.accept(),
-      'Escrow accepted successfully.'
-    )
-  }
+  async function proposeEscrow(params) {
+    try {
+      setBusy(true)
+      setMessage('Confirm the deployment in your wallet...')
+      const address = await deployEscrow(signerRef.current, params)
 
-  async function depositFunds() {
-  if (!escrowContract) {
-    alert('Please connect your wallet first.')
-    return
-  }
-
-  const amount = prompt('Enter deposit amount in ETH:', '1.0')
-
-  if (!amount) {
-    return
-  }
-
-  try {
-    setBusy(true)
-    setMessage('Preparing deposit...')
-
-    const value = ethers.parseEther(amount)
-
-    console.log('Deposit amount:', amount)
-    console.log('Deposit value:', value.toString())
-    console.log('Contract:', escrowContract)
-
-    const tx = await escrowContract.deposit({
-      value: value,
-    })
-
-    console.log('Transaction sent:', tx.hash)
-    setMessage('Transaction submitted. Waiting for confirmation...')
-
-    await tx.wait()
-
-    console.log('Transaction confirmed:', tx.hash)
-    setMessage('Deposit successful!')
-    alert('Deposit successful!')
-  } catch (error) {
-    console.error('Deposit failed:', error)
-
-    const reason =
-      error?.reason ||
-      error?.shortMessage ||
-      error?.message ||
-      'Unknown error'
-
-    setMessage(`Deposit failed: ${reason}`)
-    alert(`Deposit failed:\n\n${reason}`)
-  } finally {
-    setBusy(false)
-  }
-}
-  async function submitAttestation() {
-    const statusInput = window.prompt(
-      'Enter status code (for example 1):',
-      '1'
-    )
-
-    if (statusInput === null) return
-
-    const statusCode = Number(statusInput)
-
-    if (
-      !Number.isInteger(statusCode) ||
-      statusCode < 0 ||
-      statusCode > 255
-    ) {
-      alert('Status code must be an integer between 0 and 255.')
-      return
+      const list = addEscrow(address)
+      escrowsRef.current = list
+      setEscrows(list)
+      selectedRef.current = address
+      setSelected(address)
+      setView('detail')
+      setMessage(
+        `Escrow ${params.consignmentId} proposed at ${address}. Send this address to the exporter: they open it with "Open by address" and accept.`
+      )
+      await refresh(true)
+    } catch (error) {
+      console.error('Proposal failed:', error)
+      setMessage(`Could not propose escrow: ${errText(error)}`)
+    } finally {
+      setBusy(false)
     }
+  }
 
-    const recordHash = window.prompt(
-      'Enter the 32-byte record hash:',
-      '0x0000000000000000000000000000000000000000000000000000000000000000'
-    )
-
-    if (!recordHash) return
-
-    if (!/^0x[0-9a-fA-F]{64}$/.test(recordHash)) {
-      alert('Record hash must be exactly 32 bytes (64 hexadecimal characters).')
-      return
+  function execute(action, snap) {
+    const c = getContract(snap.address, signerRef.current)
+    switch (action.key) {
+      case 'accept':
+        return run(() => c.accept(), 'Escrow accepted. It is now Ready for the importer to fund.')
+      case 'deposit':
+        return run(() => c.deposit({ value: snap.total }), 'Deposit confirmed. The escrow is Funded.')
+      case 'stake':
+        return run(
+          () => c.stakeAsAttestor({ value: snap.requiredStake }),
+          'Stake locked. You can now attest.'
+        )
+      case 'attest': {
+        // All attestors must submit the SAME hash for their votes to match.
+        // Leave the box empty to use a deterministic demo hash.
+        const hash =
+          recordHash.trim() || ethers.id(`${snap.consignmentId}:${action.code}`)
+        if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+          setMessage('Record hash must be 0x followed by 64 hex characters (32 bytes).')
+          return undefined
+        }
+        return run(
+          () => c.attest(action.code, hash),
+          `Attestation (code ${action.code}) recorded.`
+        )
+      }
+      case 'withdraw':
+        return run(() => c.withdraw(), 'Payment withdrawn. Escrow released.')
+      case 'refund':
+        return run(() => c.refund(), 'Refund completed.')
+      case 'checkTimeout':
+        return run(() => c.checkTimeout(), 'Timeout triggered. The escrow is now Disputed.')
+      case 'resolve':
+        return run(
+          () => c.resolveDispute(action.release),
+          action.release
+            ? 'Dispute resolved: funds released to the exporter.'
+            : 'Dispute resolved: importer refunded.'
+        )
+      case 'forceResolve':
+        return run(() => c.forceResolveDispute(), 'Forced resolution: importer refunded.')
+      case 'withdrawStake':
+        return run(() => c.withdrawStake(), 'Stake withdrawn.')
+      default:
+        return undefined
     }
-
-    await runTransaction(
-      () => escrowContract.attest(statusCode, recordHash),
-      'Attestation submitted successfully.'
-    )
   }
 
-  async function withdrawEscrow() {
-    await runTransaction(
-      () => escrowContract.withdraw(),
-      'Escrow withdrawal completed successfully.'
-    )
+  // ---------- derived data for rendering ----------
+
+  const snap =
+    selected && summaries[selected] && !summaries[selected].missing
+      ? summaries[selected]
+      : null
+
+  const roles = snap ? deriveRoles(snap, account) : []
+  const actions = snap ? getActions(snap, account) : []
+  const needsHash = actions.some((a) => a.key === 'attest')
+
+  // Notification bell: alerts for the open escrow + "your turn" pings for the rest.
+  const attention = connected
+    ? [
+        ...(snap ? buildAlerts(snap, account) : []),
+        ...escrows
+          .filter((a) => a !== selected)
+          .flatMap((a) => buildListAlerts(summaries[a], account)),
+      ]
+    : []
+  const activity = snap ? eventsToNotes(snap) : []
+  const seen = snap ? (seenMap[selected] ?? getSeen(selected)) : 0
+  const unread = snap ? Math.max(0, snap.events.length - seen) : 0
+  const badge =
+    attention.filter((a) => ['action', 'warn', 'danger'].includes(a.tone)).length +
+    unread
+
+  function markActivitySeen() {
+    if (!snap) return
+    setSeen(selected, snap.events.length)
+    setSeenMap({ ...seenMap, [selected]: snap.events.length })
   }
 
-  async function refundEscrow() {
-    await runTransaction(
-      () => escrowContract.refund(),
-      'Refund completed successfully.'
-    )
-  }
-
-  async function resolveDispute() {
-    const release = window.confirm(
-      'Click OK to release funds to the exporter.\n\nClick Cancel to refund the importer.'
-    )
-
-    await runTransaction(
-      () => escrowContract.resolveDispute(release),
-      release
-        ? 'Dispute resolved: funds released to exporter.'
-        : 'Dispute resolved: funds refunded.'
-    )
-  }
-
-  async function checkTimeout() {
-    await runTransaction(
-      () => escrowContract.checkTimeout(),
-      'Timeout check completed successfully.'
-    )
-  }
+  // Highest lifecycle step reached. Refunded/Disputed sit off the main path;
+  // both can only happen after Funded, so show steps up to Funded as done.
+  const progress = snap ? (snap.state <= 5 ? snap.state : 3) : -1
 
   return (
     <div className="app">
-
       {/* Navigation */}
       <nav className="navbar">
         <div className="brand">
           <div className="brand-icon">T</div>
-
           <div>
             <h2>TrustLC</h2>
             <span>Blockchain Trade Escrow</span>
@@ -251,26 +366,36 @@ function App() {
           Hardhat Local
         </div>
 
-        <button
-          className="connect-btn"
-          onClick={connectWallet}
-        >
-          {walletConnected
-            ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
-            : 'Connect Wallet'}
-        </button>
+        <div className="nav-right">
+          {connected && (
+            <NotificationBell
+              attention={attention}
+              activity={activity}
+              badge={badge}
+              hasEscrowOpen={!!snap}
+              onOpen={markActivitySeen}
+            />
+          )}
+          {connected ? (
+            <AccountMenu
+              account={account}
+              onSwitch={switchAccount}
+              onDisconnect={disconnectWallet}
+            />
+          ) : (
+            <button className="connect-btn" onClick={connectWallet}>
+              Connect Wallet
+            </button>
+          )}
+        </div>
       </nav>
 
-      {/* Main Content */}
       <main className="container">
-
         {/* Page Header */}
         <section className="page-header">
           <div>
             <p className="eyebrow">LETTER OF CREDIT ESCROW</p>
-
             <h1>TrustLC Dashboard</h1>
-
             <p className="subtitle">
               Trust-minimized digital trade settlement using blockchain
               escrow and independent attestations.
@@ -283,334 +408,293 @@ function App() {
           </div>
         </section>
 
-        {/* Transaction Message */}
+        {/* Transaction / error message */}
         {message && (
           <div className="panel" style={{ marginBottom: '20px' }}>
             <strong>{message}</strong>
           </div>
         )}
 
-        {/* Escrow Summary */}
-        <section className="summary-grid">
-
-          <div className="summary-card">
-            <span className="card-label">Consignment ID</span>
-            <strong>SHP-88214</strong>
-          </div>
-
-          <div className="summary-card">
-            <span className="card-label">Escrow Amount</span>
-            <strong>ETH</strong>
-          </div>
-
-          <div className="summary-card">
-            <span className="card-label">Network</span>
-            <strong>Hardhat</strong>
-          </div>
-
-          <div className="summary-card">
-            <span className="card-label">Contract</span>
-            <strong>{ESCROW_ADDRESS.slice(0, 6)}...</strong>
-          </div>
-
-        </section>
-
-        {/* Main Grid */}
-        <section className="dashboard-grid">
-
-          {/* Escrow Progress */}
-          <div className="panel progress-panel">
-
+        {/* Not connected */}
+        {!connected && (
+          <section className="panel">
             <div className="panel-header">
               <div>
-                <p className="panel-label">ESCROW LIFECYCLE</p>
-                <h2>Shipment Progress</h2>
-              </div>
-
-              <span className="state-pill">Blockchain</span>
-            </div>
-
-            <div className="timeline">
-
-              <div className="timeline-item completed">
-                <div className="timeline-marker">✓</div>
-
-                <div>
-                  <h3>Proposed</h3>
-                  <p>Escrow created</p>
-                </div>
-              </div>
-
-              <div className="timeline-item">
-                <div className="timeline-marker">2</div>
-
-                <div>
-                  <h3>Accepted</h3>
-                  <p>Exporter accepts the escrow</p>
-                </div>
-              </div>
-
-              <div className="timeline-item">
-                <div className="timeline-marker">3</div>
-
-                <div>
-                  <h3>Funded</h3>
-                  <p>Funds deposited into escrow</p>
-                </div>
-              </div>
-
-              <div className="timeline-item">
-                <div className="timeline-marker">4</div>
-
-                <div>
-                  <h3>Attested</h3>
-                  <p>Awaiting verification</p>
-                </div>
-              </div>
-
-              <div className="timeline-item">
-                <div className="timeline-marker">5</div>
-
-                <div>
-                  <h3>Resolved</h3>
-                  <p>Settlement decision</p>
-                </div>
-              </div>
-
-              <div className="timeline-item">
-                <div className="timeline-marker">6</div>
-
-                <div>
-                  <h3>Released</h3>
-                  <p>Escrow settled</p>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          {/* Escrow Details */}
-          <div className="panel">
-
-            <div className="panel-header">
-              <div>
-                <p className="panel-label">ESCROW DETAILS</p>
-                <h2>Transaction Information</h2>
+                <p className="panel-label">GET STARTED</p>
+                <h2>Connect your wallet</h2>
               </div>
             </div>
-
-            <div className="details">
-
-              <div className="detail-row">
-                <span>Connected Wallet</span>
-
-                <strong>
-                  {walletConnected
-                    ? `${walletAddress.slice(0, 10)}...${walletAddress.slice(-6)}`
-                    : 'Not connected'}
-                </strong>
-              </div>
-
-              <div className="detail-row">
-                <span>Escrow Contract</span>
-
-                <strong>
-                  {ESCROW_ADDRESS.slice(0, 10)}...
-                  {ESCROW_ADDRESS.slice(-6)}
-                </strong>
-              </div>
-
-              <div className="detail-row">
-                <span>Network</span>
-                <strong>Hardhat Local</strong>
-              </div>
-
-              <div className="detail-row">
-                <span>Chain ID</span>
-                <strong>31337</strong>
-              </div>
-
-              <div className="detail-row">
-                <span>Contract Status</span>
-
-                <strong>
-                  {escrowContract ? 'Connected' : 'Not connected'}
-                </strong>
-              </div>
-
-            </div>
-          </div>
-
-        </section>
-
-        {/* Attestation Network */}
-        <section className="panel">
-
-          <div className="panel-header">
-
-            <div>
-              <p className="panel-label">ATTESTATION NETWORK</p>
-              <h2>Attestation</h2>
-            </div>
-
-            <span className="requirement">
-              Blockchain verified
-            </span>
-
-          </div>
-
-          <div className="attestor-grid">
-
-            <div className="attestor">
-              <div className="avatar">A1</div>
-
-              <div>
-                <strong>Verifier</strong>
-                <p>Submit status + record hash</p>
-              </div>
-
-              <span className="staked">Active</span>
-            </div>
-
-            <div className="attestor">
-              <div className="avatar">A2</div>
-
-              <div>
-                <strong>Proof</strong>
-                <p>32-byte record hash</p>
-              </div>
-
-              <span className="staked">Ready</span>
-            </div>
-
-            <div className="attestor">
-              <div className="avatar">A3</div>
-
-              <div>
-                <strong>Status</strong>
-                <p>On-chain attestation</p>
-              </div>
-
-              <span className="staked">Enabled</span>
-            </div>
-
-          </div>
-
-        </section>
-
-        {/* Actions */}
-        <section className="panel">
-
-          <div className="panel-header">
-
-            <div>
-              <p className="panel-label">CONTRACT ACTIONS</p>
-              <h2>Escrow Actions</h2>
-            </div>
-
-          </div>
-
-          <div className="actions-grid">
-
-            <button
-              className="action-btn primary"
-              onClick={acceptEscrow}
-              disabled={busy || !walletConnected}
-            >
-              Accept Escrow
-            </button>
-
-            <button
-              className="action-btn"
-              onClick={depositFunds}
-              disabled={busy || !walletConnected}
-            >
-              Deposit Funds
-            </button>
-
-            <button
-              className="action-btn"
-              onClick={submitAttestation}
-              disabled={busy || !walletConnected}
-            >
-              Submit Attestation
-            </button>
-
-            <button
-              className="action-btn"
-              onClick={withdrawEscrow}
-              disabled={busy || !walletConnected}
-            >
-              Withdraw Escrow
-            </button>
-
-            <button
-              className="action-btn"
-              onClick={refundEscrow}
-              disabled={busy || !walletConnected}
-            >
-              Refund
-            </button>
-
-            <button
-              className="action-btn"
-              onClick={checkTimeout}
-              disabled={busy || !walletConnected}
-            >
-              Check Timeout
-            </button>
-
-          </div>
-
-        </section>
-
-        {/* Dispute */}
-        <section className="panel dispute-panel">
-
-          <div>
-            <p className="panel-label">DISPUTE MANAGEMENT</p>
-
-            <h2>Dispute Resolution</h2>
-
             <p className="dispute-description">
-              The assigned arbitrator can resolve a dispute by releasing
-              the escrow to the exporter or returning the funds.
+              Your wallet is your identity. Once connected, the app shows the
+              escrows you are part of, works out your role in each one, and
+              offers only the actions the contract will accept from you.
             </p>
-          </div>
+          </section>
+        )}
 
-          <div className="dispute-actions">
+        {/* Escrow list */}
+        {connected && view === 'list' && (
+          <EscrowList
+            escrows={escrows}
+            summaries={summaries}
+            account={account}
+            onOpen={openEscrow}
+            onRemove={forget}
+            onAdd={addByAddress}
+            onPropose={() => {
+              setMessage('')
+              setView('propose')
+            }}
+          />
+        )}
 
-            <button
-              className="action-btn dispute"
-              onClick={resolveDispute}
-              disabled={busy || !walletConnected}
-            >
-              Resolve Dispute
+        {/* Propose */}
+        {connected && view === 'propose' && (
+          <ProposeForm
+            account={account}
+            busy={busy}
+            onSubmit={proposeEscrow}
+            onCancel={() => setView('list')}
+          />
+        )}
+
+        {/* Detail: escrow not readable */}
+        {connected && view === 'detail' && !snap && (
+          <section className="panel">
+            <p className="dispute-description">Loading escrow…</p>
+            <button className="link-btn" onClick={backToList}>
+              ← All escrows
+            </button>
+          </section>
+        )}
+
+        {/* Detail */}
+        {connected && view === 'detail' && snap && (
+          <>
+            <button className="link-btn back-link" onClick={backToList}>
+              ← All escrows
             </button>
 
-            <button
-              className="action-btn warning"
-              onClick={checkTimeout}
-              disabled={busy || !walletConnected}
-            >
-              Check Timeout
-            </button>
+            <section className="summary-grid">
+              <div className="summary-card">
+                <span className="card-label">Consignment ID</span>
+                <strong>{snap.consignmentId}</strong>
+              </div>
+              <div className="summary-card">
+                <span className="card-label">Escrow Amount</span>
+                <strong>{fmtEth(snap.amount)} POL</strong>
+              </div>
+              <div className="summary-card">
+                <span className="card-label">State</span>
+                <strong>{STATES[snap.state]}</strong>
+              </div>
+              <div className="summary-card">
+                <span className="card-label">Your role</span>
+                <strong>{roles.length ? roles.join(', ') : 'Observer'}</strong>
+              </div>
+            </section>
 
-          </div>
+            <section className="dashboard-grid">
+              <div className="panel progress-panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="panel-label">ESCROW LIFECYCLE</p>
+                    <h2>Shipment Progress</h2>
+                  </div>
+                  <span className="state-pill">{STATES[snap.state]}</span>
+                </div>
 
-        </section>
+                <div className="timeline">
+                  {LIFECYCLE.map((step) => {
+                    const completed =
+                      step.state < progress ||
+                      (snap.state === 5 && step.state === 5)
+                    const active =
+                      !completed && step.state === progress && snap.state <= 5
+                    return (
+                      <div
+                        key={step.state}
+                        className={`timeline-item${completed ? ' completed' : ''}${active ? ' active' : ''}`}
+                      >
+                        <div className="timeline-marker">
+                          {completed ? '✓' : step.state + 1}
+                        </div>
+                        <div>
+                          <h3>{step.title}</h3>
+                          <p>{step.text}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
 
-        {/* Footer */}
+              <div className="panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="panel-label">ESCROW DETAILS</p>
+                    <h2>Transaction Information</h2>
+                  </div>
+                </div>
+
+                <div className="details">
+                  <div className="detail-row">
+                    <span>Connected wallet</span>
+                    <strong>{short(account)}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Importer</span>
+                    <strong>{short(snap.importer)}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Exporter</span>
+                    <strong>{short(snap.exporter)}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Arbitrator</span>
+                    <strong>{short(snap.arbitrator)}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Contract</span>
+                    <strong>{short(snap.address)}</strong>
+                  </div>
+                  <div className="detail-row">
+                    <span>Chain ID</span>
+                    <strong>{HARDHAT_CHAIN_ID}</strong>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* What's next: the ONE place that tells you what to do */}
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-label">WHAT HAPPENS NEXT</p>
+                  <h2>Status &amp; your actions</h2>
+                </div>
+              </div>
+
+              <p className="dispute-description">{waitingOn(snap)}</p>
+
+              {roles.length === 0 && (
+                <p className="dispute-description">
+                  This wallet has no role in this escrow, so the view is
+                  read-only.
+                </p>
+              )}
+
+              {needsHash && (
+                <div style={{ margin: '16px 0' }}>
+                  <label className="card-label" htmlFor="record-hash">
+                    Record hash (32 bytes). Attestors must submit the same
+                    value for their votes to count together. Leave empty to
+                    use the demo hash.
+                  </label>
+                  <input
+                    id="record-hash"
+                    className="hash-input"
+                    type="text"
+                    placeholder="0x… (optional)"
+                    value={recordHash}
+                    onChange={(e) => setRecordHash(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {actions.length > 0 ? (
+                <div className="actions-grid">
+                  {actions.map((action) => (
+                    <button
+                      key={`${action.key}-${action.code ?? ''}-${action.release ?? ''}`}
+                      className={`action-btn ${action.variant || ''}`}
+                      onClick={() => execute(action, snap)}
+                      disabled={busy}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                roles.length > 0 && (
+                  <p className="dispute-description">
+                    Nothing for this wallet to do right now.
+                  </p>
+                )
+              )}
+            </section>
+
+            {/* Attestors */}
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-label">ATTESTATION NETWORK</p>
+                  <h2>Attestors</h2>
+                </div>
+                <span className="requirement">
+                  2 of 3 must agree · stake {fmtEth(snap.requiredStake)} POL each
+                </span>
+              </div>
+
+              <div className="attestor-grid">
+                {snap.attestors.map((addr, i) => {
+                  const isStaked = snap.stakes[i] >= snap.requiredStake
+                  return (
+                    <div className="attestor" key={addr}>
+                      <div className="avatar">A{i + 1}</div>
+                      <div>
+                        <strong>
+                          {short(addr)}
+                          {same(addr, account) ? ' (you)' : ''}
+                        </strong>
+                        <p>Stake: {fmtEth(snap.stakes[i])} POL</p>
+                      </div>
+                      <span
+                        className="staked"
+                        style={isStaked ? undefined : { opacity: 0.6 }}
+                      >
+                        {isStaked ? 'Staked' : 'Not staked'}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+
+            {/* Deadlines */}
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="panel-label">TIMING</p>
+                  <h2>Deadlines</h2>
+                </div>
+              </div>
+              <div className="details">
+                <div className="detail-row">
+                  <span>Setup (accept + deposit)</span>
+                  <strong>{fmtTime(snap.setupDeadline)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Dispatch</span>
+                  <strong>{fmtTime(snap.dispatchDeadline)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Clearance</span>
+                  <strong>{fmtTime(snap.clearanceDeadline)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Arbitration</span>
+                  <strong>{fmtTime(snap.arbitrationDeadline)}</strong>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+
         <footer>
-          <p>
-            TrustLC • Blockchain-based Letter of Credit Escrow
-          </p>
-
-          <p>
-            Hardhat Local • Chain ID 31337
-          </p>
+          <p>TrustLC • Blockchain-based Letter of Credit Escrow</p>
+          <p>Hardhat Local • Chain ID 31337</p>
         </footer>
-
       </main>
     </div>
   )
