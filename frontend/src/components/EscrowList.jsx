@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { ethers } from 'ethers'
 import {
   stateLabel,
   deriveRoles,
   fmtEth,
   getActions,
-  short,
+  parseEscrowCode,
+  shortCode,
 } from '../lib/escrow'
 
 export default function EscrowList({
@@ -22,12 +22,13 @@ export default function EscrowList({
 
   function submit(e) {
     e.preventDefault()
-    if (!ethers.isAddress(address.trim())) {
-      setError('That is not a valid address.')
+    const parsed = parseEscrowCode(address)
+    if (!parsed) {
+      setError('That is not a valid escrow code. It looks like TLC-5FBD-B231-… (a plain 0x address also works).')
       return
     }
     setError('')
-    onAdd(address.trim())
+    onAdd(parsed)
     setAddress('')
   }
 
@@ -46,7 +47,7 @@ export default function EscrowList({
 
         {escrows.length === 0 && (
           <p className="dispute-description">
-            No escrows yet. Propose one, or open one someone sent you by address.
+            No escrows yet. Propose one. Escrows that name your wallet appear here automatically.
           </p>
         )}
 
@@ -56,7 +57,7 @@ export default function EscrowList({
             if (!s) {
               return (
                 <li className="escrow-row" key={addr}>
-                  <span className="escrow-sub">Loading {short(addr)}…</span>
+                  <span className="escrow-sub">Loading {shortCode(addr)}…</span>
                 </li>
               )
             }
@@ -64,7 +65,7 @@ export default function EscrowList({
               return (
                 <li className="escrow-row" key={addr}>
                   <div>
-                    <strong>{short(addr)}</strong>
+                    <strong>{shortCode(addr)}</strong>
                     <span className="escrow-sub">{s.error}</span>
                   </div>
                   <button className="link-btn" onClick={() => onRemove(addr)}>
@@ -81,7 +82,7 @@ export default function EscrowList({
                   <div>
                     <strong>{s.consignmentId}</strong>
                     <span className="escrow-sub">
-                      {short(addr)} · {fmtEth(s.amount)} POL
+                      {shortCode(addr)} · {fmtEth(s.amount)} POL
                     </span>
                   </div>
                   <div className="row-tags">
@@ -103,18 +104,19 @@ export default function EscrowList({
         <div className="panel-header">
           <div>
             <p className="panel-label">OPEN AN ESCROW</p>
-            <h2>Open by address</h2>
+            <h2>Open by escrow code</h2>
           </div>
         </div>
         <p className="dispute-description">
-          When someone proposes an escrow to you, they send you its contract
-          address. Paste it here to add it to your list.
+          Escrows that name your wallet show up above by themselves. To look at
+          any other escrow, paste its code (TLC-…) here. You can find the code
+          in the Escrow details of any escrow you have open.
         </p>
         <form className="inline-form" onSubmit={submit}>
           <input
             className="hash-input"
             type="text"
-            placeholder="0x…"
+            placeholder="TLC-5FBD-B231-…"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
           />

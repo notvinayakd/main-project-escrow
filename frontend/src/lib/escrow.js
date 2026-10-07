@@ -57,10 +57,57 @@ export const DEMO_PARTIES = {
   feeRecipient: '0x976EA74026E726554dB657fA54763abd0C3a0aa9', // #6
 }
 
+// TEMPORARY: the platform fee wallet is fixed here, not typed by the
+// importer. The contract still accepts any address in its constructor, so this
+// is only enforced by this frontend. To be replaced by the shared RewardPool
+// contract address (see the reward-pool design).
+export const FEE_RECIPIENT = DEMO_PARTIES.feeRecipient
+
+// Hardhat's first accounts, so the account menu can say "Hardhat #3" instead
+// of just a hex string. Purely a label for local demos.
+const HARDHAT_ACCOUNTS = [
+  '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+  '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+  '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
+  '0x90F79bf6EB2c4f870365E785982E1f101E93b906',
+  '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65',
+  '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc',
+  '0x976EA74026E726554dB657fA54763abd0C3a0aa9',
+]
+
+export function demoLabel(addr) {
+  const i = HARDHAT_ACCOUNTS.findIndex((a) => a.toLowerCase() === addr?.toLowerCase())
+  return i >= 0 ? `Hardhat #${i}` : ''
+}
+
 // ---------- small helpers ----------
 
 export const same = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase()
 export const short = (addr) => `${addr.slice(0, 6)}...${addr.slice(-4)}`
+
+// ---------- escrow codes ----------
+// An escrow's contract address looks exactly like a wallet address, which is
+// confusing. So escrows are shown as a code: TLC-5FBD-B231-5678-... It carries
+// the same 40 hex digits (nothing is lost), but nobody mistakes it for a wallet.
+
+export function escrowCode(addr) {
+  return `TLC-${addr.slice(2).toUpperCase().match(/.{4}/g).join('-')}`
+}
+
+export const shortCode = (addr) =>
+  `TLC-${addr.slice(2, 6).toUpperCase()}…${addr.slice(-4).toUpperCase()}`
+
+// Accepts an escrow code or a plain 0x address. Returns a checksummed address,
+// or null when the text is neither.
+export function parseEscrowCode(input) {
+  const text = (input ?? '').trim()
+  if (ethers.isAddress(text)) return ethers.getAddress(text)
+  const m = /^TLC[-\s]?([0-9a-fA-F][0-9a-fA-F\s-]*)$/i.exec(text)
+  if (!m) return null
+  const hex = m[1].replace(/[\s-]/g, '')
+  if (!/^[0-9a-fA-F]{40}$/.test(hex)) return null
+  return ethers.getAddress(`0x${hex.toLowerCase()}`)
+}
 export const fmtEth = (wei) => ethers.formatEther(wei)
 export const fmtTime = (ts) =>
   ts === 0n ? 'not set yet' : new Date(Number(ts) * 1000).toLocaleString()
@@ -139,6 +186,73 @@ export async function deployEscrow(signer, p) {
   )
   await contract.waitForDeployment()
   return contract.getAddress()
+}
+
+// ---------- finding escrows you are part of ----------
+
+// Escrows are plain contracts, so nothing on chain lists them. On a local
+// chain we find them by scanning every block for contract creations and
+// keeping the ones that are Escrows naming this wallet. Each block is read
+// once; later calls only read new blocks.
+//
+// This does not scale to a public network (too many blocks). Before that, a
+// factory contract that records every escrow it creates should replace it.
+const MAX_SCAN_BLOCKS = 5000
+const scan = {
+  lastBlock: -1,
+  lastHash: '',
+  escrows: new Map(), // address -> every wallet named in it
+}
+
+async function readParties(provider, address) {
+  try {
+    const c = getContract(address, provider)
+    const [importer, exporter, arbitrator, a0, a1, a2] = await Promise.all([
+      c.importer(),
+      c.exporter(),
+      c.arbitrator(),
+      c.attestors(0),
+      c.attestors(1),
+      c.attestors(2),
+    ])
+    return [importer, exporter, arbitrator, a0, a1, a2]
+  } catch {
+    return null // not an Escrow contract
+  }
+}
+
+export async function discoverEscrows(provider, account) {
+  const latest = await provider.getBlockNumber()
+
+  // A restarted local chain reuses block numbers: start over if the last
+  // block we scanned is no longer the same block.
+  if (scan.lastBlock >= 0) {
+    const old = await provider.getBlock(scan.lastBlock)
+    if (!old || old.hash !== scan.lastHash) {
+      scan.lastBlock = -1
+      scan.escrows.clear()
+    }
+  }
+
+  const from = Math.max(scan.lastBlock + 1, latest - MAX_SCAN_BLOCKS, 0)
+  for (let n = from; n <= latest; n++) {
+    const block = await provider.getBlock(n, true)
+    if (!block) continue
+    for (const tx of block.prefetchedTransactions) {
+      if (tx.to !== null) continue // not a contract creation
+      const receipt = await provider.getTransactionReceipt(tx.hash)
+      const created = receipt?.contractAddress
+      if (!created) continue
+      const parties = await readParties(provider, created)
+      if (parties) scan.escrows.set(ethers.getAddress(created), parties)
+    }
+    scan.lastBlock = n
+    scan.lastHash = block.hash
+  }
+
+  return [...scan.escrows.entries()]
+    .filter(([, parties]) => parties.some((p) => same(p, account)))
+    .map(([address]) => address)
 }
 
 // ---------- reading the chain ----------
@@ -221,6 +335,8 @@ export async function loadSnapshot(
     dispatchDeadline,
     clearanceDeadline,
     arbitrationDeadline,
+    feeRecipient,
+    slashedPool,
     block,
   ] = await Promise.all([
     contract.state(),
@@ -235,6 +351,8 @@ export async function loadSnapshot(
     contract.dispatchDeadline(),
     contract.clearanceDeadline(),
     contract.arbitrationDeadline(),
+    contract.feeRecipient(),
+    contract.slashedPool(),
     provider.getBlock('latest'),
   ])
 
@@ -270,6 +388,8 @@ export async function loadSnapshot(
     dispatchDeadline,
     clearanceDeadline,
     arbitrationDeadline,
+    feeRecipient,
+    slashedPool,
     now,
     myAttestorIndex,
     myStake: myAttestorIndex >= 0 ? stakes[myAttestorIndex] : 0n,
@@ -386,6 +506,16 @@ export function getActions(s, account) {
       key: 'forceResolve',
       label: 'Force refund (arbitrator did not act in time)',
       variant: 'warning',
+    })
+  }
+
+  // Slashed stake waits in the contract until claimed. It can only be paid
+  // to the fee recipient, so only that wallet is offered the button.
+  if (same(account, s.feeRecipient) && s.slashedPool > 0n) {
+    actions.push({
+      key: 'claimSlashed',
+      label: `Claim slashed stake (${fmtEth(s.slashedPool)} POL)`,
+      variant: 'primary',
     })
   }
 

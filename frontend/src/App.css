@@ -708,6 +708,24 @@ footer {
   color: #c53030;
 }
 
+.menu-item:disabled {
+  color: #566073;
+  font-weight: 700;
+  cursor: default;
+}
+
+.menu-item:disabled:hover {
+  background: transparent;
+}
+
+.account-section {
+  margin: 10px 6px 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a94a6;
+}
+
 /* =========================
    LIST, FORMS, MISC
 ========================= */

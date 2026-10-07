@@ -1,5 +1,4 @@
 import { ethers } from 'ethers'
-import { DEMO_ESCROW_ADDRESS } from './escrow'
 
 // Per-browser conveniences only. Nothing here is authoritative: the
 // blockchain is the source of truth for every escrow.
@@ -25,14 +24,13 @@ function write(key, value) {
   }
 }
 
-// Escrows this browser knows about. Seeded with the demo deployment.
+// Escrows this browser knows about. Starts empty. Do NOT filter by a fixed
+// address here: Hardhat addresses are deterministic, so the first escrow any
+// account deploys on a fresh chain lands at the same address every time.
+// Entries that no longer exist on the chain show a "Remove" button instead.
 export function loadEscrows() {
-  const list = read(ESCROWS_KEY, null)
-  if (list === null) {
-    write(ESCROWS_KEY, [DEMO_ESCROW_ADDRESS])
-    return [DEMO_ESCROW_ADDRESS]
-  }
-  return list
+  const list = read(ESCROWS_KEY, [])
+  return Array.isArray(list) ? list : []
 }
 
 export function addEscrow(address) {
