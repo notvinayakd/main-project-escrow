@@ -4,7 +4,7 @@ import './App.css'
 import {
   HARDHAT_CHAIN_ID,
   LIFECYCLE,
-  STATES,
+  stateLabel,
   deployEscrow,
   deriveRoles,
   ensureHardhatChain,
@@ -486,7 +486,7 @@ function App() {
               </div>
               <div className="summary-card">
                 <span className="card-label">State</span>
-                <strong>{STATES[snap.state]}</strong>
+                <strong>{stateLabel(snap)}</strong>
               </div>
               <div className="summary-card">
                 <span className="card-label">Your role</span>
@@ -501,7 +501,7 @@ function App() {
                     <p className="panel-label">ESCROW LIFECYCLE</p>
                     <h2>Shipment Progress</h2>
                   </div>
-                  <span className="state-pill">{STATES[snap.state]}</span>
+                  <span className="state-pill">{stateLabel(snap)}</span>
                 </div>
 
                 <div className="timeline">

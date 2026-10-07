@@ -58,6 +58,14 @@ contract Escrow {
 
     mapping(address => uint256) public attestorStake;
 
+    // Slashed stake waiting to be claimed by the fee recipient.
+    uint256 public slashedPool;
+
+    event SlashedClaimed(
+        address indexed to,
+        uint256 amount
+    );
+
     event EscrowAccepted(address indexed exporter);
     event EscrowFunded(uint256 amount);
 
@@ -667,15 +675,10 @@ contract Escrow {
                     stake - slashAmount;
 
                 if (slashAmount > 0) {
-                    (bool sent, ) =
-                        payable(feeRecipient).call{
-                            value: slashAmount
-                        }("");
-
-                    require(
-                        sent,
-                        "Slash transfer failed"
-                    );
+                    // PULL PAYMENT: only record the amount here. Sending it
+                    // inside this loop would let a feeRecipient that rejects
+                    // payments revert checkTimeout() and freeze the escrow.
+                    slashedPool += slashAmount;
 
                     emit AttestorSlashed(
                         attestor,
@@ -686,5 +689,37 @@ contract Escrow {
         }
 
         emit EscrowDisputed();
+    }
+
+    // =============================================================
+    //                  CLAIM SLASHED STAKE (PULL)
+    // =============================================================
+
+    /// @notice Sends all slashed stake to the fee recipient. Anyone may call
+    ///         it; the money can only ever go to feeRecipient. If feeRecipient
+    ///         cannot receive funds, only this call fails - the escrow flow
+    ///         is never affected.
+    function claimSlashed() external {
+        uint256 pooled = slashedPool;
+
+        require(
+            pooled > 0,
+            "Nothing to claim"
+        );
+
+        slashedPool = 0;
+
+        (bool sent, ) =
+            payable(feeRecipient).call{value: pooled}("");
+
+        require(
+            sent,
+            "Claim transfer failed"
+        );
+
+        emit SlashedClaimed(
+            feeRecipient,
+            pooled
+        );
     }
 }

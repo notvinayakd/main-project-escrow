@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ethers } from 'ethers'
 import {
-  STATES,
+  stateLabel,
   deriveRoles,
   fmtEth,
   getActions,
@@ -90,7 +90,7 @@ export default function EscrowList({
                     <span className="tag">
                       {roles.length ? roles.join(', ') : 'Observer'}
                     </span>
-                    <span className="state-pill">{STATES[s.state]}</span>
+                    <span className="state-pill">{stateLabel(s)}</span>
                   </div>
                 </button>
               </li>

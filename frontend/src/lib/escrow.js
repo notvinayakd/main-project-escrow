@@ -25,6 +25,19 @@ export const STATES = [
   'Disputed',
 ]
 
+// Proposed/Ready escrows whose setup window has passed. The contract rejects
+// accept() and deposit() after this point ("Setup expired"), but its state
+// still says Proposed/Ready because no money was locked and nothing needs to
+// change. The UI shows this as "Expired" so nobody waits on a dead escrow.
+export function isSetupExpired(s) {
+  return s.state <= 1 && s.now > s.setupDeadline
+}
+
+// What to show in the status pill.
+export function stateLabel(s) {
+  return isSetupExpired(s) ? 'Expired' : STATES[s.state]
+}
+
 export const LIFECYCLE = [
   { state: 0, title: 'Proposed', text: 'Escrow created, exporter named' },
   { state: 1, title: 'Ready', text: 'Exporter accepted the escrow' },
@@ -287,11 +300,13 @@ export function getActions(s, account) {
   const isAttestor = s.myAttestorIndex >= 0
   const staked = s.myStake >= s.requiredStake
 
-  if (isExporter && s.state === 0) {
+  const expired = isSetupExpired(s)
+
+  if (isExporter && s.state === 0 && !expired) {
     actions.push({ key: 'accept', label: 'Accept escrow', variant: 'primary' })
   }
 
-  if (isImporter && s.state === 1) {
+  if (isImporter && s.state === 1 && !expired) {
     actions.push({
       key: 'deposit',
       label: `Deposit ${fmtEth(s.total)} POL (amount + fee)`,
@@ -387,6 +402,9 @@ export function getActions(s, account) {
 
 // Plain-language "what is happening and who is it waiting on".
 export function waitingOn(s) {
+  if (isSetupExpired(s)) {
+    return `The setup window closed at ${fmtTime(s.setupDeadline)} before the escrow was funded. No money was locked. Propose a new escrow to try again.`
+  }
   switch (s.state) {
     case 0:
       return `Waiting for the exporter to accept before ${fmtTime(s.setupDeadline)}.`
