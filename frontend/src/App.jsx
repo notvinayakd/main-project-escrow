@@ -7,7 +7,10 @@ import {
   stateLabel,
   deployEscrow,
   deriveRoles,
+  discoverEscrows,
   ensureHardhatChain,
+  escrowCode,
+  shortCode,
   errText,
   fmtEth,
   fmtTime,
@@ -39,6 +42,7 @@ import ProposeForm from './components/ProposeForm'
 
 function App() {
   const [account, setAccount] = useState('')
+  const [accounts, setAccounts] = useState([]) // every account the wallet shared with this site
   const [escrows, setEscrows] = useState(() => loadEscrows())
   const [summaries, setSummaries] = useState({})
   const [selected, setSelected] = useState(null) // escrow address being viewed
@@ -53,6 +57,7 @@ function App() {
   const escrowsRef = useRef(escrows)
   const selectedRef = useRef(null)
   const busyRef = useRef(false)
+  const activeRef = useRef('') // the account the user picked in this app
   useEffect(() => {
     busyRef.current = busy
   }, [busy])
@@ -64,7 +69,15 @@ function App() {
   const refresh = useCallback(async (silent = false) => {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum)
-      const signer = await provider.getSigner()
+
+      // The wallet shares only the accounts the user connected to this site.
+      // Use the one picked in this app if it is still shared, else the first.
+      const shared = await window.ethereum.request({ method: 'eth_accounts' })
+      if (!shared.length) {
+        throw new Error('No account is connected. Click Connect Wallet.')
+      }
+      const chosen = shared.find((a) => same(a, activeRef.current)) ?? shared[0]
+      const signer = await provider.getSigner(chosen)
       const address = await signer.getAddress()
       const network = await provider.getNetwork()
 
@@ -75,6 +88,23 @@ function App() {
       }
 
       signerRef.current = signer
+
+      // Escrows that name this wallet (as importer, exporter, attestor or
+      // arbitrator) appear automatically: nobody has to send an address.
+      try {
+        const found = await discoverEscrows(provider, address)
+        const known = escrowsRef.current
+        const fresh = found.filter((a) => !known.some((k) => same(k, a)))
+        if (fresh.length) {
+          let list = known
+          for (const a of fresh) list = addEscrow(a)
+          escrowsRef.current = list
+          setEscrows(list)
+        }
+      } catch (error) {
+        console.error('Escrow discovery failed:', error)
+      }
+
       const sel = selectedRef.current
       const next = {}
       await Promise.all(
@@ -89,6 +119,8 @@ function App() {
         })
       )
 
+      activeRef.current = address
+      setAccounts(shared)
       setAccount(address)
       setSummaries(next)
     } catch (error) {
@@ -96,6 +128,7 @@ function App() {
         console.error('Refresh failed:', error)
         setMessage(errText(error))
         setAccount('')
+        setAccounts([])
         setSummaries({})
       }
     }
@@ -134,18 +167,30 @@ function App() {
     selectedRef.current = null
     setSelected(null)
     setView('list')
+    activeRef.current = ''
     setAccount('')
+    setAccounts([])
     setSummaries({})
     setMessage('')
   }
 
-  // Opens the wallet's own account chooser.
-  async function switchAccount() {
+  // Switch to another account the wallet has already shared. No wallet popup.
+  function pickAccount(address) {
+    activeRef.current = address
+    setMessage('')
+    refresh()
+  }
+
+  // Opens the wallet's account chooser so more accounts can be shared with
+  // this site. Tick several to switch between them from the menu.
+  async function connectMoreAccounts() {
     try {
       await window.ethereum.request({
         method: 'wallet_requestPermissions',
         params: [{ eth_accounts: {} }],
       })
+      const shared = await window.ethereum.request({ method: 'eth_accounts' })
+      if (shared.length) activeRef.current = shared[0]
       await refresh()
     } catch (error) {
       if (error.code !== 4001) setMessage(errText(error)) // 4001 = user closed it
@@ -168,9 +213,13 @@ function App() {
     if (!connected || !window.ethereum) return undefined
     const onAccounts = (accounts) => {
       if (accounts.length === 0) {
+        activeRef.current = ''
         setAccount('')
+        setAccounts([])
         setSummaries({})
       } else {
+        // The wallet lists its selected account first: follow it.
+        activeRef.current = accounts[0]
         refresh()
       }
     }
@@ -232,6 +281,9 @@ function App() {
       await tx.wait()
       setMessage(successMessage)
       await refresh(true)
+      // The wallet's node connection can briefly serve the previous block, so
+      // the screen may still show the old state. Read again shortly after.
+      setTimeout(() => refresh(true), 1500)
     } catch (error) {
       console.error('Transaction failed:', error)
       setMessage(`Transaction failed: ${errText(error)}`)
@@ -253,7 +305,7 @@ function App() {
       setSelected(address)
       setView('detail')
       setMessage(
-        `Escrow ${params.consignmentId} proposed at ${address}. Send this address to the exporter: they open it with "Open by address" and accept.`
+        `Escrow ${params.consignmentId} proposed (${escrowCode(address)}). The exporter, attestors and arbitrator will see it in their list automatically.`
       )
       await refresh(true)
     } catch (error) {
@@ -307,6 +359,8 @@ function App() {
         return run(() => c.forceResolveDispute(), 'Forced resolution: importer refunded.')
       case 'withdrawStake':
         return run(() => c.withdrawStake(), 'Stake withdrawn.')
+      case 'claimSlashed':
+        return run(() => c.claimSlashed(), 'Slashed stake paid to the fee recipient.')
       default:
         return undefined
     }
@@ -379,7 +433,9 @@ function App() {
           {connected ? (
             <AccountMenu
               account={account}
-              onSwitch={switchAccount}
+              accounts={accounts}
+              onPick={pickAccount}
+              onAddMore={connectMoreAccounts}
               onDisconnect={disconnectWallet}
             />
           ) : (
@@ -461,7 +517,11 @@ function App() {
         {/* Detail: escrow not readable */}
         {connected && view === 'detail' && !snap && (
           <section className="panel">
-            <p className="dispute-description">Loading escrow…</p>
+            <p className="dispute-description">
+              {summaries[selected]?.missing
+                ? 'No escrow contract was found at this address on the connected chain. If you restarted the local node, the old escrows are gone: go back and remove it.'
+                : 'Loading escrow…'}
+            </p>
             <button className="link-btn" onClick={backToList}>
               ← All escrows
             </button>
@@ -555,8 +615,8 @@ function App() {
                     <strong>{short(snap.arbitrator)}</strong>
                   </div>
                   <div className="detail-row">
-                    <span>Contract</span>
-                    <strong>{short(snap.address)}</strong>
+                    <span>Escrow code</span>
+                    <strong title={escrowCode(snap.address)}>{shortCode(snap.address)}</strong>
                   </div>
                   <div className="detail-row">
                     <span>Chain ID</span>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ethers } from 'ethers'
-import { DEMO_PARTIES, MAX_ESCROW_POL, same } from '../lib/escrow'
+import { DEMO_PARTIES, FEE_RECIPIENT, MAX_ESCROW_POL, same } from '../lib/escrow'
 
 const EMPTY = {
   exporter: '',
@@ -14,7 +14,6 @@ const EMPTY = {
   attestor2: '',
   attestor3: '',
   arbitrator: '',
-  feeRecipient: '',
 }
 
 // Returns an error message, or '' when the form is acceptable.
@@ -46,9 +45,9 @@ function validate(f, account) {
     }
   }
 
-  const parties = [f.attestor1, f.attestor2, f.attestor3, f.arbitrator, f.feeRecipient]
+  const parties = [f.attestor1, f.attestor2, f.attestor3, f.arbitrator]
   if (!parties.every((a) => ethers.isAddress(a))) {
-    return 'Attestors, arbitrator and fee recipient must all be valid addresses.'
+    return 'Attestors and arbitrator must all be valid addresses.'
   }
   const attestors = [f.attestor1, f.attestor2, f.attestor3].map((a) => a.toLowerCase())
   if (new Set(attestors).size !== 3) return 'The three attestors must be different addresses.'
@@ -70,7 +69,7 @@ function toParams(f) {
     attestor2: f.attestor2,
     attestor3: f.attestor3,
     arbitrator: f.arbitrator,
-    feeRecipient: f.feeRecipient,
+    feeRecipient: FEE_RECIPIENT,
   }
 }
 
@@ -102,7 +101,6 @@ export default function ProposeForm({ account, busy, onSubmit, onCancel }) {
       attestor2: DEMO_PARTIES.attestor2,
       attestor3: DEMO_PARTIES.attestor3,
       arbitrator: DEMO_PARTIES.arbitrator,
-      feeRecipient: DEMO_PARTIES.feeRecipient,
     })
   }
 
@@ -161,7 +159,7 @@ export default function ProposeForm({ account, busy, onSubmit, onCancel }) {
         </div>
 
         <div className="section-row">
-          <h3 className="form-section">Attestors, arbitrator and fee recipient</h3>
+          <h3 className="form-section">Attestors and arbitrator</h3>
           <button className="link-btn" type="button" onClick={fillDemo}>
             Fill demo parties (Hardhat accounts)
           </button>
@@ -179,10 +177,11 @@ export default function ProposeForm({ account, busy, onSubmit, onCancel }) {
           <Field label="Arbitrator">
             <input {...bind('arbitrator')} placeholder="0x…" />
           </Field>
-          <Field label="Fee recipient">
-            <input {...bind('feeRecipient')} placeholder="0x…" />
-          </Field>
         </div>
+        <p className="field-hint">
+          The 2% platform fee is paid to the platform wallet ({FEE_RECIPIENT.slice(0, 6)}…
+          {FEE_RECIPIENT.slice(-4)}), which is fixed and not chosen per escrow.
+        </p>
 
         {error && <p className="form-error">{error}</p>}
 

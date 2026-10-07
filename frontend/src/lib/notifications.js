@@ -164,6 +164,9 @@ export function eventsToNotes(s) {
         text = `${who(e.args.attestor)} was slashed ${fmtEth(e.args.amount)} POL.`
         tone = 'danger'
         break
+      case 'SlashedClaimed':
+        text = `${fmtEth(e.args.amount)} POL of slashed stake was paid to the fee recipient.`
+        break
       case 'DisputeResolved':
         text = `The arbitrator resolved the dispute: ${STATES[Number(e.args.outcome)]}.`
         tone = 'success'

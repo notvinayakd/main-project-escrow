@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { short } from '../lib/escrow'
+import { demoLabel, same, short } from '../lib/escrow'
 
 // "Disconnect" is the wallet word for logging out: the app forgets the
 // account and asks the wallet to revoke this site's access.
-export default function AccountMenu({ account, onSwitch, onDisconnect }) {
+//
+// A wallet only shares the accounts you connected to this site. Every shared
+// account is listed here so you can switch roles without touching the wallet.
+export default function AccountMenu({
+  account,
+  accounts = [],
+  onPick,
+  onAddMore,
+  onDisconnect,
+}) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const ref = useRef(null)
@@ -26,9 +35,12 @@ export default function AccountMenu({ account, onSwitch, onDisconnect }) {
     }
   }
 
+  const label = demoLabel(account)
+
   return (
     <div className="nav-popover" ref={ref}>
       <button className="connect-btn" onClick={() => setOpen(!open)}>
+        {label ? `${label} · ` : ''}
         {short(account)} ▾
       </button>
 
@@ -38,14 +50,32 @@ export default function AccountMenu({ account, onSwitch, onDisconnect }) {
           <button className="menu-item" onClick={copy}>
             {copied ? 'Copied ✓' : 'Copy address'}
           </button>
+
+          <p className="account-section">Connected accounts</p>
+          {accounts.map((a) => (
+            <button
+              key={a}
+              className="menu-item"
+              disabled={same(a, account)}
+              onClick={() => {
+                setOpen(false)
+                onPick(a)
+              }}
+            >
+              {same(a, account) ? '● ' : ''}
+              {demoLabel(a) ? `${demoLabel(a)} · ` : ''}
+              {short(a)}
+            </button>
+          ))}
+
           <button
             className="menu-item"
             onClick={() => {
               setOpen(false)
-              onSwitch()
+              onAddMore()
             }}
           >
-            Switch account
+            + Connect more accounts…
           </button>
           <button
             className="menu-item danger"
