@@ -40,6 +40,7 @@ No notary, no oracle operator, and no party who can both lie and profit from it.
 |---|---|
 | `contracts/` | Solidity escrow contract and its test suite (Hardhat 3, Solidity, Mocha + ethers). Note the `contracts/contracts/` nesting — that is Hardhat's own convention for `.sol` sources. |
 | `portal/` | Mock customs portal — the National Trade Documentation Gateway (NTG/CTCCS). Node.js + Express. This is the real-world data source attestations are proven against. |
+| `frontend/` | The dApp (React 19 + Vite + ethers 6). The wallet is the identity; roles are derived per escrow, and the contract enforces every permission. |
 | `docs/` | Project knowledge base, team roadmap, interactive prototype, and portal screenshots. |
 
 ## Stack
@@ -50,7 +51,7 @@ No notary, no oracle operator, and no party who can both lie and profit from it.
 | Contracts | Solidity, Hardhat 3 |
 | zkTLS | TLSNotary |
 | Portal | Node.js 24, Express 5 |
-| Frontend | React + Vite + Tailwind *(planned)* |
+| Frontend | React 19, Vite, ethers 6 |
 
 ---
 
@@ -79,6 +80,34 @@ npx hardhat test
 
 Requires Node.js 22.13 or later, and `git` on PATH.
 
+### Frontend (local demo)
+
+Use separate terminals.
+
+```
+cd contracts
+npx hardhat node          # terminal 1: local chain (id 31337, port 8545)
+
+cd contracts
+npx hardhat run scripts/deploy-local.ts --network localhost   # terminal 2: optional demo escrow
+
+cd frontend
+npm install
+npm run dev               # terminal 3: http://localhost:5173
+```
+
+Import the Hardhat test accounts into MetaMask to play each role (importer, exporter,
+attestors, arbitrator). The app can also create escrows itself through "Propose escrow",
+so the deploy script is optional. Each attestor stakes 1 POL, and an escrow can be at
+most 2 POL.
+
+To demo a deadline without waiting, fast-forward the local chain (development only):
+
+```
+cd contracts
+node scripts/skip-time.mjs 2d     # also accepts minutes (90) or hours (3h)
+```
+
 ---
 
 ## Project status
@@ -86,10 +115,10 @@ Requires Node.js 22.13 or later, and `git` on PATH.
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Proposal, literature review | Complete |
-| 1 | Escrow contract | In progress |
+| 1 | Escrow contract (staking, slashing, disputes, backstops) | Built and tested; testnet deploy pending |
 | 2 | Mock customs portal | Complete — not yet deployed |
 | 3 | zkTLS attestation layer | Not started |
-| 4 | Frontend | Not started |
+| 4 | Frontend | Working local build (propose, list, notifications, disconnect); full manual test pass pending |
 
 ## Team
 

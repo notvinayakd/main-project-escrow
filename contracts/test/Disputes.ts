@@ -273,6 +273,20 @@ describe("Escrow — Disputes", function () {
 
     await escrow.checkTimeout();
 
+    // Pull payment: checkTimeout() only records the slashed money.
+    expect(
+      await ethers.provider.getBalance(
+        feeRecipient.address,
+      ),
+    ).to.equal(before);
+
+    expect(await escrow.slashedPool()).to.equal(
+      SLASH_AMOUNT * 3n,
+    );
+
+    // Anyone can trigger the claim; it always pays the fee recipient.
+    await escrow.claimSlashed();
+
     const after =
       await ethers.provider.getBalance(
         feeRecipient.address,
@@ -283,6 +297,8 @@ describe("Escrow — Disputes", function () {
     ).to.equal(
       SLASH_AMOUNT * 3n,
     );
+
+    expect(await escrow.slashedPool()).to.equal(0n);
   });
 
   it("emits AttestorSlashed for each attestor", async function () {
